@@ -43,6 +43,10 @@ import java.util.StringTokenizer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import freemarker.template.Configuration;
+import freemarker.template.Template;
+import freemarker.template.TemplateException;
+
 import pcgen.cdom.base.CDOMObject;
 import pcgen.cdom.base.Constants;
 import pcgen.cdom.enumeration.ListKey;
@@ -74,6 +78,9 @@ import pcgen.io.exporttoken.Token;
 import pcgen.io.exporttoken.TotalToken;
 import pcgen.io.exporttoken.WeaponToken;
 import pcgen.io.exporttoken.WeaponhToken;
+import pcgen.io.freemarker.PCStringDirective;
+import pcgen.io.freemarker.PCVarFunction;
+import pcgen.system.ConfigurationSettings;
 import pcgen.system.PluginLoader;
 import pcgen.util.Delta;
 import pcgen.util.Logging;
@@ -105,6 +112,12 @@ public final class ExportHandler
 	 */
 	private static boolean tokenMapPopulated;
 
+	/**
+	 * ExportEngine describes a possible templating engine to be used to 
+	 * process a character and a template to produce the character output.
+	 */
+	private enum ExportEngine { PCGEN, FREEMARKER};
+	
 	// Processing state variables
 
 	/** TODO What is this used for? */
@@ -145,6 +158,8 @@ public final class ExportHandler
 
 	/** TODO What is this used for? */
 	private boolean inLabel;
+	
+	private ExportEngine exportEngine;
 
 	/**
 	 * Constructor.  Populates the token map (a list of possible output tokens) and 
@@ -156,6 +171,7 @@ public final class ExportHandler
 	{
 		populateTokenMap();
 		setTemplateFile(templateFile);
+		decideExportEngine();
 	}
 
 	/**
@@ -193,6 +209,12 @@ public final class ExportHandler
 		// Set an output filter based on the type of template in use.
 		FileAccess.setCurrentOutputFilter(templateFile.getName());
 
+		if (exportEngine == ExportEngine.FREEMARKER)
+		{
+			exportCharacterUsingFreemarker(aPC, out);
+			return;
+		}
+		
 		BufferedReader br = null;
 		FileInputStream fis = null;
 		InputStreamReader isr = null;
@@ -268,6 +290,55 @@ public final class ExportHandler
 		csheetTag2 = "\\";
 	}
 
+	private void exportCharacterUsingFreemarker(PlayerCharacter aPC, BufferedWriter outputWriter)
+	{
+		Configuration cfg = new Configuration();
+
+		try
+		{
+			// Set Directory for templates
+			cfg.setDirectoryForTemplateLoading(templateFile.getParentFile());
+			// load template
+			Template template = cfg.getTemplate(templateFile.getName());
+
+			cfg.setSharedVariable("pcstring", new PCStringDirective());
+			cfg.setSharedVariable("pcvar", new PCVarFunction());
+			cfg.setSharedVariable("pc", aPC);
+			
+			// data-model
+			Map<String, Object> input = new HashMap<String, Object>();
+			input.put("pc", aPC);
+			input.put("exportHandler", this);
+//			input.put("gameModeVarCountMap", gameModeVarCountMap);
+//			input.put("pathIgnoreLen", dataPathLen + 1);
+
+			// Process the template
+			template.process(input, outputWriter);
+		}
+		catch (IOException exc)
+		{
+			Logging.errorPrint("Error exporting character using template " + templateFile, exc);
+		}
+		catch (TemplateException e)
+		{
+			Logging.errorPrint("Error exporting character using template " + templateFile, e);
+		}
+		finally
+		{
+			if (outputWriter != null)
+			{
+				try
+				{
+					outputWriter.flush();
+				}
+				catch (Exception e2)
+				{
+				}
+			}
+		}
+	}
+	
+	
 	/**
 	 * A helper method to prepare the template for exporting
 	 * 
@@ -344,6 +415,19 @@ public final class ExportHandler
 	public File getTemplateFile()
 	{
 		return templateFile;
+	}
+
+	/**
+	 * Determine which templating engine should be used for the template file.
+	 */
+	private void decideExportEngine()
+	{
+		exportEngine = ExportEngine.PCGEN;
+		
+		if (templateFile.getName().toLowerCase().endsWith(".ftl"))
+		{
+			exportEngine = ExportEngine.FREEMARKER;
+		}
 	}
 
 	/**
